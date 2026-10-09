@@ -1,0 +1,36 @@
+#!/bin/bash
+set -e
+
+mkdir -p build
+
+CFLAGS="-m32 -ffreestanding -fno-pie -fno-stack-protector \
+-fno-asynchronous-unwind-tables -fno-unwind-tables \
+-ffunction-sections -fdata-sections"
+
+gcc $CFLAGS -c src/kernel.c -o build/kernel.o
+gcc $CFLAGS -c src/terminal.c -o build/terminal.o
+gcc $CFLAGS -c src/keyboard.c -o build/keyboard.o
+
+ld -m elf_i386 -T src/linker.ld \
+    -o build/kernel.elf \
+    build/kernel.o build/terminal.o build/keyboard.o
+
+objcopy -O binary build/kernel.elf build/kernel.bin
+
+# The bootloader reads 62 sectors (31,744 bytes) for the kernel.
+KERNEL_SIZE=$(stat -c%s build/kernel.bin)
+
+if [ "$KERNEL_SIZE" -gt 31744 ]; then
+    echo "ERROR: Kernel is too large for the bootloader!"
+    echo "Kernel size: $KERNEL_SIZE bytes; maximum: 31744 bytes."
+    exit 1
+fi
+
+nasm -f bin src/boot.asm -o build/boot.bin
+
+cat build/boot.bin build/kernel.bin > build/stanos.img
+truncate -s 32256 build/stanos.img
+
+qemu-system-i386 -no-reboot -no-shutdown \
+    -vga std \
+    -drive format=raw,file=build/stanos.img
